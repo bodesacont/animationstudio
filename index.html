@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Animated Drawing App with Smoothing, Select, Erase, and Audio Upload</title>
+  <title>Animated Drawing App (with Smoothing, Select, Erase, Audio Upload)</title>
   <style>
     body {
       margin: 0;
@@ -65,7 +65,7 @@
   </div>
   <canvas id="canvas" width="900" height="550"></canvas>
   <script>
-    // --- Drawing State and Data Structures ---
+    // === Drawing State and Data Structures ===
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     let mode = 'draw'; // 'draw', 'select', 'erase'
@@ -80,7 +80,7 @@
     let hoverIdx = null;
     let pointerDownTime = 0;
 
-    // --- UI Elements ---
+    // === UI Elements and Toolbar Logic ===
     function setMode(newMode) {
       mode = newMode;
       document.querySelectorAll('#toolbar button').forEach(btn => btn.classList.remove('active-btn'));
@@ -94,7 +94,7 @@
     document.getElementById('selectBtn').onclick = () => setMode('select');
     document.getElementById('eraseBtn').onclick = () => setMode('erase');
 
-    // --- Audio Upload ---
+    // === Audio Upload Feature ===
     const audioInput = document.getElementById('audioInput');
     const audioPlayer = document.getElementById('audioPlayer');
     const audioFileName = document.getElementById('audioFileName');
@@ -108,7 +108,7 @@
       }
     });
 
-    // --- Smoothing: Chaikin's Algorithm ---
+    // === Smoothing: Chaikin's Algorithm ===
     function chaikinSmooth(points, iterations = 3) {
       if (points.length < 3) return points;
       let newPoints = points.slice();
@@ -131,7 +131,7 @@
       return newPoints;
     }
 
-    // --- Utility Functions ---
+    // === Utility Functions ===
     function getPos(e) {
       if (e.touches) e = e.touches[0];
       const rect = canvas.getBoundingClientRect();
@@ -159,7 +159,7 @@
       return null;
     }
 
-    // --- Main Animation Loop ---
+    // === Main Animation Loop ===
     function redraw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -219,7 +219,7 @@
       if (animating) requestAnimationFrame(animate);
     }
 
-    // --- Pointer and Touch Events ---
+    // === Pointer and Touch Events ===
     function onPointerDown(e) {
       const pos = getPos(e);
       pointerDownTime = Date.now();
@@ -294,19 +294,18 @@
       }
     }
 
-    // --- Touch Support ---
+    // === Touch Support for Mobile ===
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointerleave', onPointerUp);
     canvas.addEventListener('dblclick', onDoubleClick);
 
-    // Mobile touch events (for iPad/phones)
     canvas.addEventListener('touchstart', e => { e.preventDefault(); onPointerDown(e); }, { passive: false });
     canvas.addEventListener('touchmove', e => { e.preventDefault(); onPointerMove(e); }, { passive: false });
     canvas.addEventListener('touchend', e => { e.preventDefault(); onPointerUp(e); }, { passive: false });
 
-    // --- Keyboard shortcuts ---
+    // === Keyboard Shortcuts ===
     document.addEventListener('keydown', e => {
       if (e.key === 'Delete' && selectedLineIdx !== null) {
         lines.splice(selectedLineIdx, 1);
@@ -324,7 +323,7 @@
       if (e.key === 'e') setMode('erase');
     });
 
-    // --- Initial UI Setup ---
+    // === Initial UI Setup ===
     setMode('draw');
     redraw();
   </script>
