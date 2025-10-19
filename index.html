@@ -2,53 +2,103 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Drawing App with Smoothing, Select, Erase, and Audio Upload</title>
+  <title>Animated Drawing App with Smoothing, Select, Erase, and Audio Upload</title>
   <style>
-    body { font-family: sans-serif; margin: 0; }
-    #toolbar {
-      display: flex; 
-      gap: 10px; 
-      padding: 10px; 
-      background: #eee; 
-      align-items: center;
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f8f9fa;
     }
-    #canvas { border: 1px solid #ccc; display:block; margin: 0 auto; touch-action: none;}
-    .selected { outline: 2px solid blue; }
-    .hidden { display:none; }
+    #toolbar {
+      display: flex;
+      gap: 10px;
+      padding: 10px;
+      background: #eee;
+      align-items: center;
+      border-bottom: 1px solid #ddd;
+    }
+    #canvas {
+      border: 1px solid #bbb;
+      display: block;
+      margin: 20px auto;
+      background: #fff;
+      touch-action: none;
+      box-shadow: 2px 2px 10px #eee;
+      cursor: crosshair;
+    }
+    #audioPlayer {
+      margin-left: 10px;
+      vertical-align: middle;
+    }
+    #audioFileName {
+      color: #888;
+      font-size: 0.9em;
+      margin-left: 6px;
+    }
+    .active-btn {
+      background: #2979ff;
+      color: #fff;
+      border-radius: 4px;
+    }
+    .selected {
+      outline: 2px solid #2979ff;
+    }
+    .hidden {
+      display: none;
+    }
+    .tip {
+      font-size: 0.9em;
+      color: #999;
+      margin-left: 20px;
+    }
   </style>
 </head>
 <body>
   <div id="toolbar">
-    <button id="drawBtn">Draw</button>
-    <button id="selectBtn">Select</button>
-    <button id="eraseBtn">Erase</button>
+    <button id="drawBtn">✏️ Draw</button>
+    <button id="selectBtn">🖱 Select</button>
+    <button id="eraseBtn">🧽 Erase</button>
     <input type="file" id="audioInput" accept="audio/*">
     <span id="audioFileName"></span>
     <audio id="audioPlayer" controls class="hidden"></audio>
+    <span class="tip">Tip: Double-click a line to delete it</span>
   </div>
-  <canvas id="canvas" width="800" height="500"></canvas>
+  <canvas id="canvas" width="900" height="550"></canvas>
   <script>
-    // --- Drawing state ---
+    // --- Drawing State and Data Structures ---
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    let mode = 'draw'; // draw, select, erase
+    let mode = 'draw'; // 'draw', 'select', 'erase'
     let drawing = false;
     let currentLine = [];
     let lines = [];
     let selectedLineIdx = null;
-    let dragOffset = {x:0, y:0};
     let dragging = false;
+    let dragStart = null;
+    let dragLast = null;
+    let animating = false;
+    let hoverIdx = null;
+    let pointerDownTime = 0;
 
-    // --- UI buttons ---
-    document.getElementById('drawBtn').onclick = () => { mode = 'draw'; selectedLineIdx = null; redraw(); }
-    document.getElementById('selectBtn').onclick = () => { mode = 'select'; selectedLineIdx = null; redraw(); }
-    document.getElementById('eraseBtn').onclick = () => { mode = 'erase'; selectedLineIdx = null; redraw(); }
+    // --- UI Elements ---
+    function setMode(newMode) {
+      mode = newMode;
+      document.querySelectorAll('#toolbar button').forEach(btn => btn.classList.remove('active-btn'));
+      if (mode === 'draw') document.getElementById('drawBtn').classList.add('active-btn');
+      if (mode === 'select') document.getElementById('selectBtn').classList.add('active-btn');
+      if (mode === 'erase') document.getElementById('eraseBtn').classList.add('active-btn');
+      canvas.style.cursor = mode === 'draw' ? 'crosshair' : (mode === 'select' ? 'pointer' : 'not-allowed');
+      redraw();
+    }
+    document.getElementById('drawBtn').onclick = () => setMode('draw');
+    document.getElementById('selectBtn').onclick = () => setMode('select');
+    document.getElementById('eraseBtn').onclick = () => setMode('erase');
 
-    // --- Audio upload ---
+    // --- Audio Upload ---
     const audioInput = document.getElementById('audioInput');
     const audioPlayer = document.getElementById('audioPlayer');
     const audioFileName = document.getElementById('audioFileName');
-    audioInput.addEventListener('change', (e) => {
+    audioInput.addEventListener('change', e => {
       const file = e.target.files[0];
       if (file) {
         audioFileName.textContent = file.name;
@@ -58,14 +108,14 @@
       }
     });
 
-    // --- Smoothing: Chaikin's algorithm ---
-    function chaikinSmooth(points, iterations = 2) {
+    // --- Smoothing: Chaikin's Algorithm ---
+    function chaikinSmooth(points, iterations = 3) {
+      if (points.length < 3) return points;
       let newPoints = points.slice();
       for (let iter = 0; iter < iterations; iter++) {
         let smoothed = [];
         for (let i = 0; i < newPoints.length - 1; i++) {
-          let p0 = newPoints[i];
-          let p1 = newPoints[i + 1];
+          let p0 = newPoints[i], p1 = newPoints[i + 1];
           let Q = {
             x: 0.75 * p0.x + 0.25 * p1.x,
             y: 0.75 * p0.y + 0.25 * p1.y
@@ -76,12 +126,12 @@
           };
           smoothed.push(Q, R);
         }
-        newPoints = [newPoints[0], ...smoothed, newPoints[newPoints.length-1]];
+        newPoints = [newPoints[0], ...smoothed, newPoints[newPoints.length - 1]];
       }
       return newPoints;
     }
 
-    // --- Mouse/touch helpers ---
+    // --- Utility Functions ---
     function getPos(e) {
       if (e.touches) e = e.touches[0];
       const rect = canvas.getBoundingClientRect();
@@ -90,14 +140,35 @@
         y: (e.clientY - rect.top) * (canvas.height / rect.height)
       };
     }
+    function ptLineDist(pt, a, b) {
+      const A = pt.x - a.x, B = pt.y - a.y, C = b.x - a.x, D = b.y - a.y;
+      const dot = A * C + B * D;
+      const len_sq = C * C + D * D;
+      let param = len_sq !== 0 ? dot / len_sq : -1;
+      if (param < 0) param = 0; else if (param > 1) param = 1;
+      const xx = a.x + param * C, yy = a.y + param * D;
+      return Math.hypot(pt.x - xx, pt.y - yy);
+    }
+    function getLineAt(pos, threshold = 10) {
+      for (let idx = lines.length - 1; idx >= 0; idx--) {
+        const pts = chaikinSmooth(lines[idx].points);
+        for (let i = 0; i < pts.length - 1; i++) {
+          if (ptLineDist(pos, pts[i], pts[i+1]) < threshold) return idx;
+        }
+      }
+      return null;
+    }
 
-    // --- Drawing ---
+    // --- Main Animation Loop ---
     function redraw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw all lines
       lines.forEach((line, idx) => {
         ctx.save();
-        ctx.strokeStyle = (idx === selectedLineIdx) ? "#2979ff" : "#222";
-        ctx.lineWidth = (idx === selectedLineIdx) ? 4 : 2;
+        ctx.strokeStyle = idx === selectedLineIdx ? '#2979ff' : (idx === hoverIdx ? '#ff9800' : '#222');
+        ctx.lineWidth = idx === selectedLineIdx ? 4 : 2;
+        ctx.globalAlpha = idx === hoverIdx ? 0.7 : 1.0;
         ctx.beginPath();
         const pts = chaikinSmooth(line.points);
         pts.forEach((pt, i) => {
@@ -107,13 +178,15 @@
         ctx.stroke();
         ctx.restore();
       });
-      // If currently drawing, show preview
-      if (drawing && mode==='draw' && currentLine.length > 1) {
+
+      // If drawing, preview current line
+      if (drawing && mode === 'draw' && currentLine.length > 1) {
         ctx.save();
-        ctx.strokeStyle = "#888";
+        ctx.strokeStyle = "#2979ff";
         ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.7;
         ctx.beginPath();
-        let pts = chaikinSmooth(currentLine);
+        const pts = chaikinSmooth(currentLine);
         pts.forEach((pt, i) => {
           if (i === 0) ctx.moveTo(pt.x, pt.y);
           else ctx.lineTo(pt.x, pt.y);
@@ -121,19 +194,51 @@
         ctx.stroke();
         ctx.restore();
       }
+
+      // If dragging, show ghost
+      if (dragging && mode === 'select' && selectedLineIdx !== null) {
+        ctx.save();
+        ctx.strokeStyle = "#80d8ff";
+        ctx.lineWidth = 4;
+        ctx.setLineDash([6, 5]);
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        const pts = chaikinSmooth(lines[selectedLineIdx].points);
+        pts.forEach((pt, i) => {
+          if (i === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
+        ctx.stroke();
+        ctx.restore();
+        ctx.setLineDash([]);
+      }
     }
 
+    function animate() {
+      redraw();
+      if (animating) requestAnimationFrame(animate);
+    }
+
+    // --- Pointer and Touch Events ---
     function onPointerDown(e) {
       const pos = getPos(e);
+      pointerDownTime = Date.now();
       if (mode === 'draw') {
         drawing = true;
         currentLine = [pos];
+        animating = true;
+        animate();
       } else if (mode === 'select') {
         selectedLineIdx = getLineAt(pos);
         if (selectedLineIdx !== null) {
           dragging = true;
-          const line = lines[selectedLineIdx];
-          dragOffset = { x: pos.x - line.points[0].x, y: pos.y - line.points[0].y };
+          dragStart = pos;
+          dragLast = pos;
+          animating = true;
+          animate();
+        } else {
+          selectedLineIdx = null;
+          redraw();
         }
       } else if (mode === 'erase') {
         const idx = getLineAt(pos);
@@ -142,71 +247,85 @@
           redraw();
         }
       }
-      redraw();
     }
 
     function onPointerMove(e) {
-      if (drawing && mode==='draw') {
-        currentLine.push(getPos(e));
-        redraw();
-      } else if (dragging && mode==='select' && selectedLineIdx !== null) {
-        const pos = getPos(e);
-        const line = lines[selectedLineIdx];
-        // Move all points by mouse delta
-        const deltaX = pos.x - line.points[0].x - dragOffset.x;
-        const deltaY = pos.y - line.points[0].y - dragOffset.y;
-        line.points = line.points.map(pt => ({ x: pt.x + deltaX, y: pt.y + deltaY }));
+      const pos = getPos(e);
+      if (drawing && mode === 'draw') {
+        currentLine.push(pos);
+      } else if (dragging && mode === 'select' && selectedLineIdx !== null) {
+        const dx = pos.x - dragLast.x;
+        const dy = pos.y - dragLast.y;
+        let line = lines[selectedLineIdx];
+        line.points = line.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+        dragLast = pos;
+      } else if (mode === 'select') {
+        // Hover highlighting
+        hoverIdx = getLineAt(pos);
         redraw();
       }
     }
 
     function onPointerUp(e) {
-      if (drawing && mode==='draw') {
+      const pos = getPos(e);
+      if (drawing && mode === 'draw') {
         if (currentLine.length > 1) {
           lines.push({ points: currentLine });
         }
         currentLine = [];
         drawing = false;
+        animating = false;
+        redraw();
+      } else if (dragging && mode === 'select' && selectedLineIdx !== null) {
+        dragging = false;
+        dragStart = null;
+        dragLast = null;
+        animating = false;
         redraw();
       }
-      dragging = false;
     }
 
-    // --- Hit test for selecting/erasing lines ---
-    function getLineAt(pos, threshold = 7) {
-      for (let idx = lines.length - 1; idx >= 0; idx--) { // top-most first
-        const pts = chaikinSmooth(lines[idx].points);
-        for (let i = 0; i < pts.length - 1; i++) {
-          if (ptLineDist(pos, pts[i], pts[i+1]) < threshold) {
-            return idx;
-          }
-        }
+    function onDoubleClick(e) {
+      const pos = getPos(e);
+      const idx = getLineAt(pos);
+      if (idx !== null) {
+        lines.splice(idx, 1);
+        redraw();
       }
-      return null;
-    }
-    // Distance from point to line segment
-    function ptLineDist(pt, a, b) {
-      const A = pt.x - a.x, B = pt.y - a.y, C = b.x - a.x, D = b.y - a.y;
-      const dot = A * C + B * D;
-      const len_sq = C * C + D * D;
-      let param = (len_sq !== 0) ? dot / len_sq : -1;
-      if (param < 0) param = 0;
-      else if (param > 1) param = 1;
-      const xx = a.x + param * C, yy = a.y + param * D;
-      return Math.hypot(pt.x - xx, pt.y - yy);
     }
 
-    // --- Event listeners ---
+    // --- Touch Support ---
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointerleave', onPointerUp);
+    canvas.addEventListener('dblclick', onDoubleClick);
 
-    // Touch support for mobile
+    // Mobile touch events (for iPad/phones)
     canvas.addEventListener('touchstart', e => { e.preventDefault(); onPointerDown(e); }, { passive: false });
     canvas.addEventListener('touchmove', e => { e.preventDefault(); onPointerMove(e); }, { passive: false });
     canvas.addEventListener('touchend', e => { e.preventDefault(); onPointerUp(e); }, { passive: false });
 
+    // --- Keyboard shortcuts ---
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Delete' && selectedLineIdx !== null) {
+        lines.splice(selectedLineIdx, 1);
+        selectedLineIdx = null;
+        redraw();
+      }
+      if (e.key === 'Escape') {
+        drawing = false;
+        dragging = false;
+        selectedLineIdx = null;
+        redraw();
+      }
+      if (e.key === 'd') setMode('draw');
+      if (e.key === 's') setMode('select');
+      if (e.key === 'e') setMode('erase');
+    });
+
+    // --- Initial UI Setup ---
+    setMode('draw');
     redraw();
   </script>
 </body>
